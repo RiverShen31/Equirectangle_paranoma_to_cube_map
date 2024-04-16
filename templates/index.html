@@ -1,20 +1,472 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cubemap Converter</title>
+  <meta charset="utf-8">
+  <meta name="description" content="Convert a 360° panorama to a cubemap.">
+  <title>Panorama to Cubemap</title>
+  <style>
+    body {
+      margin: 1em auto;
+      max-width: 800px;
+    }
+    .settings > * {
+      margin-top: 12px;
+      margin-bottom: 12px;
+    }
+    #cubemap {
+      width: 800px;
+      height: 600px;
+      position: relative;
+      border: 1px solid #888;
+      background: #eee;
+      margin-top: 15px;
+    }
+  </style>
 </head>
-<body>
-    <h1>Cubemap Converter</h1>
-    <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" name="file" id="fileInput">
-        <button type="submit">Convert</button>
-    </form>
 
-    <!-- Include main.js -->
-    <!-- <script src="{{ url_for('static', filename='js/main.js') }}"></script>
-    <!-- Include convert.js -->
-    <!-- <script src="{{ url_for('static', filename='js/convert.js') }}"></script> --> -->
+<body>
+  <header>
+    <h1>Panorama to Cubemap</h1>
+    <aside>Convert a 360° panorama to six cube faces.</aside>
+  </header>
+
+  <main>
+    <section>
+      <h2>Upload</h2>
+      <label>Upload a panoramic image: <input id="imageInput" type="file" accept="image/*"></label>
+      <ul>
+        <li>The image should be formatted with the equirectangular projection.</li>
+        <li>The image should have an aspect ratio of 2:1 (the width must be exactly twice the height).</li>
+      </ul>
+      <p>A cubemap will be generated from your image.</p>
+    </section>
+
+    <section class="settings">
+      <h2>Settings</h2>
+      <div>
+        <label>Cube Rotation: <input id="cubeRotation" type="number" min="0" max="359" value="180">°</label>
+      </div>
+      <fieldset title="The resampling algorithm to use when generating the cubemap.">
+        <legend>Interpolation type</legend>
+        <label><input type="radio" name="interpolation" value="lanczos" checked>Lanczos (best but slower)</label>
+        <label><input type="radio" name="interpolation" value="cubic">Cubic (sharper details)</label>
+        <label><input type="radio" name="interpolation" value="linear">Linear (softer details)</label>
+      </fieldset>
+      <fieldset>
+        <legend>Output format</legend>
+        <label><input type="radio" name="format" value="png" checked>PNG</label>
+        <label><input type="radio" name="format" value="jpg">JPEG</label>
+      </fieldset>
+    </section>
+
+    <section>
+      <h2>Output</h2>
+      <p>Click each cube face to save it to your computer.</p>
+      <div id="cubemap">
+        <b id="generating" style="visibility:hidden">Generating...</b>
+        <output id="faces"></output>
+      </div>
+      <!-- Button to trigger the download of cube faces -->
+      <button id="downloadButton" onclick="downloadCubeFaces()">Download Cube Faces</button>
+    </section>
+  </main>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.6.0/jszip.min.js"></script>
+
+  <script>
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    class RadioInput {
+      constructor(name, onChange) {
+        this.inputs = document.querySelectorAll(`input[name=${name}]`);
+        for (let input of this.inputs) {
+          input.addEventListener('change', onChange);
+        }
+      }
+
+      get value() {
+        for (let input of this.inputs) {
+          if (input.checked) {
+            return input.value;
+          }
+        }
+      }
+    }
+
+    class Input {
+      constructor(id, onChange) {
+        this.input = document.getElementById(id);
+        this.input.addEventListener('change', onChange);
+        this.valueAttrib = this.input.type === 'checkbox' ? 'checked' : 'value';
+      }
+
+      get value() {
+        return this.input[this.valueAttrib];
+      }
+    }
+
+    class CubeFace {
+      constructor(faceName) {
+        this.faceName = faceName;
+
+        this.anchor = document.createElement('a');
+        this.anchor.style.position='absolute';
+        this.anchor.title = faceName;
+
+        this.img = document.createElement('img');
+        this.img.style.filter = 'blur(4px)';
+
+        this.anchor.appendChild(this.img);
+      }
+
+      setPreview(url, x, y) {
+        this.img.src = url;
+        this.anchor.style.left = `${x}px`;
+        this.anchor.style.top = `${y}px`;
+      }
+
+      setDownload(url, fileExtension) {
+        this.anchor.href = url;
+        this.anchor.download = `${this.faceName}.${fileExtension}`;
+        this.img.style.filter = '';
+      }
+    }
+
+    function removeChildren(node) {
+      while (node.firstChild) {
+        node.removeChild(node.firstChild);
+      }
+    }
+
+    const mimeType = {
+      'jpg': 'image/jpeg',
+      'png': 'image/png'
+    };
+
+    function getDataURL(imgData, extension) {
+      canvas.width = imgData.width;
+      canvas.height = imgData.height;
+      ctx.putImageData(imgData, 0, 0);
+      return new Promise(resolve => {
+        canvas.toBlob(blob => resolve(URL.createObjectURL(blob)), mimeType[extension], 0.92);
+      });
+    }
+
+    const dom = {
+      imageInput: document.getElementById('imageInput'),
+      faces: document.getElementById('faces'),
+      generating: document.getElementById('generating')
+    };
+
+    dom.imageInput.addEventListener('change', loadImage);
+
+    const settings = {
+      cubeRotation: new Input('cubeRotation', loadImage),
+      interpolation: new RadioInput('interpolation', loadImage),
+      format: new RadioInput('format', loadImage),
+    };
+
+    const facePositions = {
+      front: {x: 1, y: 1},
+      back: {x: 3, y: 1},
+      right: {x: 2, y: 1},
+      left: {x: 0, y: 1},
+      top: {x: 1, y: 0},
+      down: {x: 1, y: 2}
+    };
+
+    function loadImage() {
+      const file = dom.imageInput.files[0];
+
+      if (!file) {
+        return;
+      }
+
+      const img = new Image();
+
+      img.src = URL.createObjectURL(file);
+
+      img.addEventListener('load', () => {
+        const {width, height} = img;
+        canvas.width = width;
+        canvas.height = height;
+        ctx.drawImage(img, 0, 0);
+        const data = ctx.getImageData(0, 0, width, height);
+
+        processImage(data);
+      });
+    }
+
+    let finished = 0;
+    let workers = [];
+
+    function processImage(data) {
+      removeChildren(dom.faces);
+      dom.generating.style.visibility = 'visible';
+
+      for (let worker of workers) {
+        worker.terminate();
+      }
+
+      for (let [faceName, position] of Object.entries(facePositions)) {
+        renderFace(data, faceName, position);
+      }
+    }
+    
+    function renderFace(data, faceName, position) {
+      const face = new CubeFace(faceName);
+      dom.faces.appendChild(face.anchor);
+
+      const options = {
+        data: data,
+        face: faceName,
+        rotation: Math.PI * settings.cubeRotation.value / 180,
+        interpolation: settings.interpolation.value,
+      };
+
+      const worker = new Worker(URL.createObjectURL(new Blob([`
+        function clamp(x, min, max) {
+          return Math.min(max, Math.max(x, min));
+        }
+
+        function mod(x, n) {
+          return ((x % n) + n) % n;
+        }
+
+        function copyPixelNearest(read, write) {
+          const {width, height, data} = read;
+          const readIndex = (x, y) => 4 * (y * width + x);
+
+          return (xFrom, yFrom, to) => {
+
+            const nearest = readIndex(
+              clamp(Math.round(xFrom), 0, width - 1),
+              clamp(Math.round(yFrom), 0, height - 1)
+            );
+
+            for (let channel = 0; channel < 3; channel++) {
+              write.data[to + channel] = data[nearest + channel];
+            }
+          };
+        }
+
+        function copyPixelBilinear(read, write) {
+          const {width, height, data} = read;
+          const readIndex = (x, y) => 4 * (y * width + x);
+
+          return (xFrom, yFrom, to) => {
+            const xl = clamp(Math.floor(xFrom), 0, width - 1);
+            const xr = clamp(Math.ceil(xFrom), 0, width - 1);
+            const xf = xFrom - xl;
+
+            const yl = clamp(Math.floor(yFrom), 0, height - 1);
+            const yr = clamp(Math.ceil(yFrom), 0, height - 1);
+            const yf = yFrom - yl;
+
+            const p00 = readIndex(xl, yl);
+            const p10 = readIndex(xr ,yl);
+            const p01 = readIndex(xl, yr);
+            const p11 = readIndex(xr, yr);
+
+            for (let channel = 0; channel < 3; channel++) {
+              const p0 = data[p00 + channel] * (1 - xf) + data[p10 + channel] * xf;
+              const p1 = data[p01 + channel] * (1 - xf) + data[p11 + channel] * xf;
+              write.data[to + channel] = Math.ceil(p0 * (1 - yf) + p1 * yf);
+            }
+          };
+        }
+
+        // performs a discrete convolution with a provided kernel
+        function kernelResample(read, write, filterSize, kernel) {
+          const {width, height, data} = read;
+          const readIndex = (x, y) => 4 * (y * width + x);
+
+          const twoFilterSize = 2*filterSize;
+          const xMax = width - 1;
+          const yMax = height - 1;
+          const xKernel = new Array(4);
+          const yKernel = new Array(4);
+
+          return (xFrom, yFrom, to) => {
+            const xl = Math.floor(xFrom);
+            const yl = Math.floor(yFrom);
+            const xStart = xl - filterSize + 1;
+            const yStart = yl - filterSize + 1;
+
+            for (let i = 0; i < twoFilterSize; i++) {
+              xKernel[i] = kernel(xFrom - (xStart + i));
+              yKernel[i] = kernel(yFrom - (yStart + i));
+            }
+
+            for (let channel = 0; channel < 3; channel++) {
+              let q = 0;
+
+              for (let i = 0; i < twoFilterSize; i++) {
+                const y = yStart + i;
+                const yClamped = clamp(y, 0, yMax);
+                let p = 0;
+                for (let j = 0; j < twoFilterSize; j++) {
+                  const x = xStart + j;
+                  const index = readIndex(clamp(x, 0, xMax), yClamped);
+                  p += data[index + channel] * xKernel[j];
+
+                }
+                q += p * yKernel[i];
+              }
+
+              write.data[to + channel] = Math.round(q);
+            }
+          };
+        }
+
+        function copyPixelBicubic(read, write) {
+          const b = -0.5;
+          const kernel = x => {
+            x = Math.abs(x);
+            const x2 = x*x;
+            const x3 = x*x*x;
+            return x <= 1 ?
+              (b + 2)*x3 - (b + 3)*x2 + 1 :
+              b*x3 - 5*b*x2 + 8*b*x - 4*b;
+          };
+
+          return kernelResample(read, write, 2, kernel);
+        }
+
+        function copyPixelLanczos(read, write) {
+          const filterSize = 5;
+          const kernel = x => {
+            if (x === 0) {
+              return 1;
+            }
+            else {
+              const xp = Math.PI * x;
+              return filterSize * Math.sin(xp) * Math.sin(xp / filterSize) / (xp * xp);
+            }
+          };
+
+          return kernelResample(read, write, filterSize, kernel);
+        }
+
+        const orientations = {
+          front: (out, x, y) => {
+            out.x = -1;
+            out.y = -x;
+            out.z = -y;
+          },
+          back: (out, x, y) => {
+            out.x = 1;
+            out.y = x;
+            out.z = -y;
+          },
+          right: (out, x, y) => {
+            out.x = x;
+            out.y = -1;
+            out.z = -y;
+          },
+          left: (out, x, y) => {
+            out.x = -x;
+            out.y = 1;
+            out.z = -y;
+          },
+          top: (out, x, y) => {
+            out.x = -y;
+            out.y = -x;
+            out.z = 1;
+          },
+          down: (out, x, y) => {
+            out.x = y;
+            out.y = -x;
+            out.z = -1;
+          }
+        };
+
+        function renderFace({data: readData, face, rotation, interpolation, maxWidth = Infinity}) {
+
+          const faceWidth = Math.min(maxWidth, readData.width / 4);
+          const faceHeight = faceWidth;
+
+          const cube = {};
+          const orientation = orientations[face];
+
+          const writeData = new ImageData(faceWidth, faceHeight);
+
+          const copyPixel =
+            interpolation === 'linear' ? copyPixelBilinear(readData, writeData) :
+            interpolation === 'cubic' ? copyPixelBicubic(readData, writeData) :
+            interpolation === 'lanczos' ? copyPixelLanczos(readData, writeData) :
+            copyPixelNearest(readData, writeData);
+
+          for (let x = 0; x < faceWidth; x++) {
+            for (let y = 0; y < faceHeight; y++) {
+              const to = 4 * (y * faceWidth + x);
+
+              // fill alpha channel
+              writeData.data[to + 3] = 255;
+
+              // get position on cube face
+              // cube is centered at the origin with a side length of 2
+              orientation(cube, (2 * (x + 0.5) / faceWidth - 1), (2 * (y + 0.5) / faceHeight - 1));
+
+              // project cube face onto unit sphere by converting cartesian to spherical coordinates
+              const r = Math.sqrt(cube.x*cube.x + cube.y*cube.y + cube.z*cube.z);
+              const lon = mod(Math.atan2(cube.y, cube.x) + rotation, 2 * Math.PI);
+              const lat = Math.acos(cube.z / r);
+
+              copyPixel(readData.width * lon / Math.PI / 2 - 0.5, readData.height * lat / Math.PI - 0.5, to);
+            }
+          }
+
+          postMessage(writeData);
+        }
+
+        onmessage = function({data}) {
+          renderFace(data);
+        };
+      `], { type: 'application/javascript' })));
+
+      const setDownload = ({data: imageData}) => {
+        const extension = settings.format.value;
+
+        getDataURL(imageData, extension)
+          .then(url => face.setDownload(url, extension));
+
+        finished++;
+
+        if (finished === 6) {
+          dom.generating.style.visibility = 'hidden';
+          finished = 0;
+          workers = [];
+        }
+      };
+
+      const setPreview = ({data: imageData}) => {
+        const x = imageData.width * position.x;
+        const y = imageData.height * position.y;
+
+        getDataURL(imageData, 'jpg')
+          .then(url => face.setPreview(url, x, y));
+
+        worker.onmessage = setDownload;
+        worker.postMessage(options);
+      };
+
+      worker.onmessage = setPreview;
+      worker.postMessage(Object.assign({}, options, {
+        maxWidth: 200,
+        interpolation: 'linear',
+      }));
+
+      workers.push(worker);
+    }
+
+    function downloadCubeFaces() {
+      const downloadLinks = document.querySelectorAll('a');
+      downloadLinks.forEach(link => {
+        link.click();
+      });
+    }
+
+  </script>
 </body>
 </html>
