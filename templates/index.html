@@ -3,13 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cubemap Generator</title>
+    <title>Cubemap Converter</title>
 </head>
 <body>
-    <h1>Cubemap Generator</h1>
-    <form action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" name="file" accept="image/*">
-        <input type="submit" value="Generate Cubemap">
+    <h1>Cubemap Converter</h1>
+    <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="file" id="fileInput">
+        <button type="submit">Convert</button>
     </form>
+
+    <!-- Include main.js -->
+    <!-- <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <!-- Include convert.js -->
+    <!-- <script src="{{ url_for('static', filename='js/convert.js') }}"></script> --> -->
 </body>
 </html>
