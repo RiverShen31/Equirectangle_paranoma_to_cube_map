@@ -69,6 +69,19 @@
       <!-- Button to trigger the download of cube faces -->
       <button id="downloadButton" onclick="downloadCubeFaces()">Download Cube Faces</button>
     </section>
+    <hr>
+    <section>
+        <h2>Upload</h2>
+        <form action="/convert" method="post" enctype="multipart/form-data">
+          <label>Upload the top image: <input name="top_image" type="file" accept="image/*"></label><br>
+          <label>Upload the down image: <input name="down_image" type="file" accept="image/*"></label><br>
+          <label>Upload the back image: <input name="back_image" type="file" accept="image/*"></label><br>
+          <label>Upload the front image: <input name="front_image" type="file" accept="image/*"></label><br>
+          <label>Upload the right image: <input name="right_image" type="file" accept="image/*"></label><br>
+          <label>Upload the left image: <input name="left_image" type="file" accept="image/*"></label><br>
+          <button type="submit">Convert and Upload</button>
+        </form>
+      </section>
   </main>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.6.0/jszip.min.js"></script>
 
