@@ -16,6 +16,7 @@ def index():
 
 @app.route('/convert', methods=['POST'])
 def convert():
+    print("run convert")
     uploaded_files = {
         'top': request.files['top_image'],
         'down': request.files['down_image'],
@@ -63,6 +64,7 @@ def convert():
 
         # Send the zip file for download and remove it afterwards
         response = send_file(media_zip_filename, as_attachment=True, mimetype='application/zip')
+        print("OK")
         return response
     else:
         return 'Error: Please upload all images.'

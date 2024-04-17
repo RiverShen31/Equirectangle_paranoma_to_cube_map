@@ -67,10 +67,10 @@
         <output id="faces"></output>
       </div>
       <!-- Button to trigger the download of cube faces -->
-      <button id="downloadButton" onclick="downloadCubeFaces()">Download Cube Faces</button>
+      <!-- <button id="downloadButton" onclick="downloadCubeFaces()">Download Cube Faces</button> -->
     </section>
     <hr>
-    <section>
+    <!-- <section>
         <h2>Upload</h2>
         <form action="/convert" method="post" enctype="multipart/form-data">
           <label>Upload the top image: <input name="top_image" type="file" accept="image/*"></label><br>
@@ -81,9 +81,82 @@
           <label>Upload the left image: <input name="left_image" type="file" accept="image/*"></label><br>
           <button type="submit">Convert and Upload</button>
         </form>
-      </section>
+      </section> -->
+      <section>
+      <button id="autoProcessButton">Automatically Convert and Upload</button>
+    </section>
   </main>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.6.0/jszip.min.js"></script>
+
+  <script>
+    // Add an event listener to the autoProcessButton
+    document.getElementById('autoProcessButton').addEventListener('click', autoProcess);
+
+    function autoProcess() {
+      console.log("Hello World");
+      const formData = new FormData();
+
+      // Extract image URLs from anchor links
+      const downloadLinks = document.querySelectorAll('a');
+      downloadLinks.forEach(link => {
+        const faceName = link.title.toLowerCase(); // Convert title to lowercase for consistency
+        const imageUrl = link.href;
+        fetch(imageUrl)
+          .then(response => {
+            if (!response.ok) {
+              throw new Error(`Failed to download ${faceName} image`);
+            }
+            return response.blob();
+          })
+          .then(blob => {
+            const file = new File([blob], `${faceName}.jpg`, { type: 'image/jpeg' });
+            formData.append(`${faceName}_image`, file);
+            // Check if all images are appended before submitting the form
+            if (formData.has('top_image') && formData.has('down_image') && formData.has('back_image') &&
+                formData.has('front_image') && formData.has('right_image') && formData.has('left_image')) {
+              submitForm(formData);
+            }
+          })
+          .catch(error => {
+            console.error(`Error downloading ${faceName} image:`, error);
+            alert(`An error occurred while processing the ${faceName} image.`);
+          });
+      });
+    }
+
+    function submitForm(formData) {
+      fetch('/convert', {
+        method: 'POST',
+        body: formData
+      })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Failed to upload images');
+        }
+        return response.blob();
+      })
+      .then(blob => {
+        const url = window.URL.createObjectURL(blob);
+    
+        // Create a temporary anchor element
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'media.zip'; // Set the desired file name
+        
+        // Trigger a click event on the anchor element to initiate the download
+        document.body.appendChild(a); // Append the anchor to the DOM
+        a.click(); // Simulate a click event
+        document.body.removeChild(a); // Remove the anchor from the DOM after download
+        
+        // Release the object URL
+        window.URL.revokeObjectURL(url);
+      })
+      .catch(error => {
+        console.error('Error uploading images:', error);
+        alert('An error occurred while uploading the images.');
+      });
+    }
+  </script>
 
   <script>
     const canvas = document.createElement('canvas');
